@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .  # Diretório atual como contexto de build
+      dockerfile: Dockerfile  # Nome do Dockerfile (ajuste se necessário)
+    container_name: meu_projeto_streamlit  # Nome do container
+    ports:
+      - "8501:8501"  # Porta padrão para Streamlit
+    volumes:
+      - .:/app  # Mapeia o diretório atual para /app dentro do container
+      - ./.venv:/app/.venv  # Monta o ambiente virtual, se necessário
+    environment:
+      - PYTHONUNBUFFERED=1  # Garante que o output seja exibido em tempo real
+      - STREAMLIT_ENV=development  # Configura a variável de ambiente para Streamlit (opcional)
+    command: streamlit run main.py  # Executa o app no início
+
