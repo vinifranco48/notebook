@@ -8,7 +8,12 @@ from langchain_core.documents import Document
 from datetime import datetime
 import os
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
+from pathlib import Path
+
+# Obtém o diretório raiz do projeto (pasta notebook)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+
 
 import streamlit as st
 import logging
@@ -17,7 +22,7 @@ from typing import List
 from datetime import datetime
 
 # Imports locais
-from text_processing import TextProcessor, TextProcessingConfig
+from src.text_processing.load_clear import TextProcessor, TextProcessingConfig
 from store.vector_store import ChromaDBHandler
 
 import streamlit as st
