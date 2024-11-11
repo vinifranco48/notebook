@@ -40,7 +40,7 @@ class TutorialSystem:
     def render_header(self):
         st.markdown("""
             <div class="header">
-                <h1>Sistema de Tutoriais</h1>
+                <h1>Tutoriais</h1>
                 <p>Selecione um tutorial abaixo para começar</p>
             </div>
         """, unsafe_allow_html=True)
@@ -58,12 +58,12 @@ class TutorialSystem:
         
         with col1:
             self.create_tutorial_card(
-                "💼", "Imobilizado", ["Lançamento de notas fiscais", "Validação de documentos"], "30 minutos"
+                "💼", "Imobilizado", ["Lançamento de notas fiscais Imobilizados", "Inserir documentos imobilizados no sistema"], "30 minutos"
             )
         
         with col2:
             self.create_tutorial_card(
-                "📄", "Documentos", ["Gestão de documentos", "Processo de aprovação"], "20 minutos"
+                "📄", "Documentos", ["Tutoriais gerais", "CFOP, DESPESAS "], "20 minutos"
             )
 
     def render_tutorial(self, tutorial_title):
