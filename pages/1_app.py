@@ -1,119 +1,154 @@
 import streamlit as st
-import logging
 from pathlib import Path
-from typing import List, Optional, Dict, Union
-from datetime import datetime
-
-# Importações específicas
-from langchain_core.documents import Document
-from src.text_processing.load_clear import TextProcessor, TextProcessingConfig
+import asyncio
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from spellchecker import SpellChecker
-from store.vector_store import FAISSDBHandler
-from langchain import hub
+from langchain_groq import ChatGroq
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
+import os
 
-# Configuração de logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuração da página Streamlit
+st.set_page_config(
+    page_title="Chat com Documentos",
+    page_icon="📚",
+    layout="centered"
+)
 
-class ChatbotApp:
-    """
-    Aplicação Streamlit com interface de chatbot usando um LLM.
-    """
+# Estilização CSS personalizada
+st.markdown("""
+    <style>
+    .stTextInput {
+        padding: 10px;
+    }
+    .chat-message {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: column;
+    }
+    .user-message {
+        background-color: #e6f3ff;
+    }
+    .assistant-message {
+        background-color: #f0f2f6;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Prompt personalizado
+CUSTOM_PROMPT = """
+Você é um tutor especializado em criar experiências de aprendizado personalizadas a partir de documentos. Sua missão é transformar o conteúdo técnico em explicações claras e envolventes.
+
+Contexto do Documento:
+{context}
+
+Pergunta do Usuário:
+{question}
+
+Instruções de Resposta:
+
+
+1. Explicação Didática
+- Explique cada conceito usando linguagem clara e acessível
+- Forneça exemplos práticos quando possível
+- Use analogias para tornar conceitos complexos mais compreensíveis
+- Inclua dicas e observações importantes
+- Seja didatico porem direto.
+
+Por favor, mantenha um tom amigável e encorajador, adequado para aprendizado.
+
+Resposta:
+"""
+
+@st.cache_resource
+def initialize_rag_system():
+    """Inicializa o sistema RAG com cache para evitar recarregamento"""
+    # Configurar Groq API key
+    os.environ["GROQ_API_KEY"] = "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"
     
-    def __init__(self):
-        """Inicializa a aplicação com as configurações padrão."""
-        # Configurações de diretório
-        self.data_dir = Path("./dados_vetoriais")
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        # Aqui e o local onde esta ps pdfs
-        self.pdf_dir = Path(r"C:\Users\Graúna Motos\Documents\notebook\data")
-        
-        # Configurações do processador de texto
-        self.config = TextProcessingConfig(
-            chunk_size=1000,
-            overlap_size=200
-        )
-        
-        # Inicializa componentes básicos
-        self.text_processor = TextProcessor()
-        self.vector_store = FAISSDBHandler(
-            embedding_model=HuggingFaceEmbeddings(),
-            persist_directory=str(self.data_dir),
-            collection_name="documentos_processados"
-        )
-        
-        # Configuração do LLM e QA Chain
-        self.setup_llm()
-        
-        # Inicializa estados da sessão
-        if 'messages' not in st.session_state:
-            st.session_state.messages = []
-        if 'processed_files' not in st.session_state:
-            st.session_state.processed_files = set()
-            self._process_documents()
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-mpnet-base-v2"
+    )
+    
+    # Carregar o índice FAISS
+    if not Path("faiss_index").exists():
+        st.error("Índice FAISS não encontrado. Por favor, execute primeiro o script de processamento dos PDFs.")
+        st.stop()
+    
+    vectorstore = FAISS.load_local(
+        "faiss_index",
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+    
+    # Criar o template do prompt
+    prompt_template = PromptTemplate(
+        template=CUSTOM_PROMPT,
+        input_variables=["context", "question"]
+    )
+    
+    # Configurar o modelo LLM
+    llm = ChatGroq(
+        temperature=0.1,
+        model_name="llama3-70b-8192",
+        max_tokens=1024
+    )
+    
+    # Criar a chain de QA
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=vectorstore.as_retriever(search_kwargs={"k": 4}),
+        chain_type_kwargs={
+            "prompt": prompt_template,
+            "verbose": False
+        }
+    )
+    
+    return qa_chain
 
-    def setup_llm(self):
-        qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-        combine_dochs = create_stuff_documents_chain(
-            
-        )
-    def _process_documents(self):
-        """Processa documentos e os armazena na base FAISS."""
-        try:
-            # aqui eu pego todos os pdfs
-            pdf_files = list(self.pdf_dir.glob("*.pdf"))
-            
-            for file in pdf_files:
-                if file.name not in st.session_state.processed_files:
-                    documents = list(self.text_processor.process_documents([str(file)]))
-                    self.vector_store.store_documents(documents)
-                    st.session_state.processed_files.add(file.name)
-                    
-        except Exception as e:
-            logger.error(f"Erro no processamento: {str(e)}")
-
-    def run(self):
-        """Executa a interface do chatbot."""
-        st.title("Assistente de Documentos Inteligente 🤖")
-        
-        # Inicializa o estado da sessão
-        if 'messages' not in st.session_state:
-            st.session_state.messages = []
-        if 'processed_files' not in st.session_state:
-            st.session_state.processed_files = set()
-
-        # Mostra mensagem inicial
-        if not st.session_state.messages:
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "Olá! Sou seu assistente especializado em documentos. Como posso ajudar você hoje?"
-            })
-
-        # Mostra histórico de mensagens
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Campo de input do usuário
-        if prompt := st.chat_input("Digite sua pergunta..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            # Processa e mostra resposta
-            with st.chat_message("assistant"):
-                with st.spinner("Pensando..."):
-                    # Insira a lógica de resposta aqui
-                    response = {"answer": "Resposta simulada", "sources": []}  # Substitua pelo método de resposta
-                    st.markdown(response["answer"])
-                    st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
+async def get_response(qa_chain, query):
+    """Função assíncrona para obter resposta do sistema RAG"""
+    response = await qa_chain.ainvoke({"query": query})
+    return response['result']
 
 def main():
-    """Função principal da aplicação."""
-    app = ChatbotApp()
-    app.run()
+    st.title("💬 Chat com Documentos")
+    st.subheader("Faça perguntas sobre seus documentos")
+    
+    # Inicializar o histórico de chat na sessão se não existir
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    
+    # Inicializar o sistema RAG
+    qa_chain = initialize_rag_system()
+    
+    # Mostrar mensagens do histórico
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # Input do usuário
+    if prompt := st.chat_input("Digite sua pergunta aqui"):
+        # Adicionar mensagem do usuário ao histórico
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Gerar e mostrar resposta do assistente
+        with st.chat_message("assistant"):
+            with st.spinner("Pensando..."):
+                response = asyncio.run(get_response(qa_chain, prompt))
+                st.markdown(response)
+                # Adicionar resposta ao histórico
+                st.session_state.messages.append({"role": "assistant", "content": response})
+
+    # Botão para limpar o histórico
+    if st.sidebar.button("Limpar Conversa"):
+        st.session_state.messages = []
+        st.rerun()
 
 if __name__ == "__main__":
     main()
