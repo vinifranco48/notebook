@@ -96,16 +96,18 @@ class TutorialHandler:
         context = "\n".join([text for text, _, _ in relevant_sections])
         
         prompt = f"""
-        Com base no tutorial sobre o lançamento de notas fiscais de imobilizado, responda a pergunta abaixo de forma clara e didática:
+        Com base no tutorial sobre o lançamento de notas fiscais de imobilizado, responda à pergunta abaixo de forma clara, objetiva e didática:
 
-        Contexto do Tutorial: {context}
+        Contexto do Tutorial:
+        {context}
 
-        Pergunta: {query}
+        Pergunta:
+        {query}
 
-        Instruções adicionais:
+        Instruções para a Resposta:
 
-        Se a pergunta estiver relacionada ao imobilizado, inclua todos os passos do processo para facilitar a compreensão completa.
-        Se a pergunta for sobre despesas, classifique os itens conforme o título em que cada palavra estiver listada abaixo.
+        Para perguntas sobre imobilizado: Liste e explique cada passo do processo de forma detalhada, assegurando que todos os passos sejam apresentados para máxima compreensão.
+        Para perguntas sobre despesas: Classifique os itens estritamente conforme o título em que cada palavra está listada abaixo, respondendo apenas com a categoria relacionada, sem suposições.
         """
         
         explanation = self.llm.predict(prompt)
