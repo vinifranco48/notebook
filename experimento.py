@@ -1,164 +1,238 @@
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
-from langchain.chains import RetrievalQA
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.prompts import PromptTemplate
-from pathlib import Path
 import os
+from typing import Dict, List, Tuple, TypedDict
+from datetime import datetime
+from langgraph.graph import Graph, END
+from groq import Groq
+import operator
 
-# Configure Groq API key
-os.environ["GROQ_API_KEY"] = "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"
+# Definição dos tipos de dados
+class AgentState(TypedDict):
+    messages: List[Dict[str, str]]
+    customer_id: str
+    issue_type: str | None
+    sentiment: str | None
+    escalated: bool
+    resolved: bool
 
-# Define o prompt personalizado
-CUSTOM_PROMPT = """
-Você é um assistente especializado em analisar e explicar documentos.
+# Configuração do cliente Groq
+client = "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"
 
-Contexto dos documentos:
-{context}
+def call_groq(messages: List[Dict[str, str]]) -> str:
+    """Função auxiliar para chamar a API da Groq"""
+    try:
+        response = client.chat.completions.create(
+            messages=messages,
+            model="mixtral-8x7b-32768",
+            temperature=0.7,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Erro ao chamar Groq API: {e}")
+        return "Desculpe, houve um erro no processamento."
 
-Pergunta do usuário:
-{question}
+# Funções auxiliares
+def format_message(role: str, content: str) -> Dict[str, str]:
+    return {"role": role, "content": content}
 
-Instrução: Responda sobre os documentos com precisão e didaticamente, explicando o que está no documento de acordo com o contexto da pergunta. Se a informação não estiver nos documentos, indique claramente.
+# Nós do grafo
+def classify_issue(state: AgentState) -> AgentState:
+    """Classifica o tipo de problema do cliente"""
+    messages = state["messages"]
+    last_message = messages[-1]["content"]
+    
+    classification_prompt = f"""
+    Classifique o problema do cliente em uma das seguintes categorias:
+    - TECHNICAL (problemas técnicos)
+    - BILLING (problemas de cobrança)
+    - ACCOUNT (problemas de conta)
+    - INFO (pedidos de informação)
+    
+    Mensagem do cliente: {last_message}
+    
+    Responda apenas com a categoria.
+    """
+    
+    response = call_groq([
+        format_message("system", classification_prompt),
+        format_message("user", last_message)
+    ])
+    
+    state["issue_type"] = response.strip()
+    return state
 
-Resposta:
-"""
+def analyze_sentiment(state: AgentState) -> AgentState:
+    """Analisa o sentimento do cliente"""
+    messages = state["messages"]
+    last_message = messages[-1]["content"]
+    
+    sentiment_prompt = """
+    Analise o sentimento desta mensagem e classifique como:
+    POSITIVE, NEGATIVE, ou NEUTRAL.
+    Responda apenas com a classificação.
+    """
+    
+    response = call_groq([
+        format_message("system", sentiment_prompt),
+        format_message("user", last_message)
+    ])
+    
+    state["sentiment"] = response.strip()
+    return state
 
-def verify_pdf_directory(pdf_dir):
-    """Verifica se o diretório existe e lista os PDFs encontrados"""
-    pdf_dir = Path(pdf_dir)
-    
-    if not pdf_dir.exists():
-        raise FileNotFoundError(f"Diretório não encontrado: {pdf_dir}")
-    
-    pdf_files = list(pdf_dir.glob("*.pdf"))
-    print(f"\nDiretório de PDFs: {pdf_dir.absolute()}")
-    print(f"PDFs encontrados: {len(pdf_files)}")
-    for pdf in pdf_files:
-        print(f"- {pdf.name}")
-    
-    return pdf_files
+def should_escalate(state: AgentState) -> Tuple[str, AgentState]:
+    """Decide se deve escalar para um humano"""
+    if (state["sentiment"] == "NEGATIVE" and 
+        state["issue_type"] in ["TECHNICAL", "BILLING"]):
+        state["escalated"] = True
+        return "escalate", state
+    return "handle", state
 
-def process_pdfs(pdf_files):
-    """Processa os PDFs e retorna os documentos"""
-    documents = []
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=150
-    )
+def handle_customer_query(state: AgentState) -> AgentState:
+    """Processa a consulta do cliente"""
+    messages = state["messages"]
+    issue_type = state["issue_type"]
     
-    for pdf_path in pdf_files:
-        try:
-            print(f"\nProcessando: {pdf_path.name}")
-            loader = PyPDFLoader(str(pdf_path))
-            pdf_documents = loader.load()
-            split_documents = text_splitter.split_documents(pdf_documents)
-            documents.extend(split_documents)
-            print(f"Páginas processadas: {len(pdf_documents)}")
-        except Exception as e:
-            print(f"Erro ao processar {pdf_path.name}: {e}")
+    system_prompt = f"""
+    Você é um agente de atendimento ao cliente profissional.
+    O tipo de problema é: {issue_type}
     
-    return documents
+    Diretrizes:
+    - Seja empático e profissional
+    - Forneça soluções práticas
+    - Confirme entendimento
+    - Pergunte se há mais alguma dúvida
+    """
+    
+    conversation = [format_message("system", system_prompt)]
+    conversation.extend(messages)
+    
+    response = call_groq(conversation)
+    
+    state["messages"].append(format_message("assistant", response))
+    return state
 
-def create_rag_system():
-    # Definir o caminho correto para o diretório de PDFs
-    pdf_dir = Path('./pdfs')  # Ajuste o caminho conforme necessário
+def escalate_to_human(state: AgentState) -> AgentState:
+    """Prepara escalonamento para atendente humano"""
+    escalation_message = f"""
+    Este caso será encaminhado para um atendente humano devido à sua complexidade.
     
-    # Verifica o diretório de PDFs
-    pdf_files = verify_pdf_directory(pdf_dir)
+    Detalhes do caso:
+    - ID do Cliente: {state['customer_id']}
+    - Tipo de Problema: {state['issue_type']}
+    - Sentimento: {state['sentiment']}
     
-    if not pdf_files:
-        raise ValueError("Nenhum PDF encontrado no diretório")
+    Um especialista entrará em contato em breve.
+    """
     
-    print("\nProcessando PDFs...")
-    documents = process_pdfs(pdf_files)
-    print(f"Total de chunks processados: {len(documents)}")
-    
-    if documents:
-        print("\nAmostra do primeiro chunk:")
-        print(documents[0].page_content[:200] + "...")
-    
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
-    
-    print("\nCriando índice FAISS...")
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    vectorstore.save_local("faiss_index")
-    
-    return vectorstore
+    state["messages"].append(format_message("assistant", escalation_message))
+    return state
 
-def load_rag_system(embeddings):
-    if not Path("faiss_index").exists():
-        raise FileNotFoundError("Índice FAISS não encontrado")
-    
-    return FAISS.load_local(
-        "faiss_index",
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
+def check_resolution(state: AgentState) -> Tuple[str, AgentState]:
+    """Verifica se o problema foi resolvido"""
+    if state["escalated"]:
+        state["resolved"] = True
+        return "end", state
+        
+    last_message = state["messages"][-1]["content"].lower()
+    if "mais alguma dúvida" in last_message:
+        state["resolved"] = True
+        return "end", state
+    return "continue", state
 
-def create_qa_chain(vectorstore):
-    # Cria o template do prompt personalizado
-    prompt_template = PromptTemplate(
-        template=CUSTOM_PROMPT,
-        input_variables=["context", "question"]
-    )
+# Construção do grafo
+def build_customer_service_graph() -> Graph:
+    workflow = Graph()
     
-    llm = ChatGroq(
-        temperature=0.1,
-        model_name="mixtral-8x7b-32768",
-        max_tokens=1024  # Aumentado para respostas mais detalhadas
-    )
+    # Define o fluxo do grafo
+    workflow.add_node("classify_issue", classify_issue)
+    workflow.add_node("analyze_sentiment", analyze_sentiment)
+    workflow.add_node("should_escalate", should_escalate)
+    workflow.add_node("handle_customer_query", handle_customer_query)
+    workflow.add_node("escalate_to_human", escalate_to_human)
+    workflow.add_node("check_resolution", check_resolution)
     
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vectorstore.as_retriever(
-            search_kwargs={"k": 4}  # Aumentado para buscar mais contexto
-        ),
-        chain_type_kwargs={
-            "prompt": prompt_template,
-            "verbose": True  # Permite ver o processo de geração da resposta
+    # Define as conexões
+    workflow.set_entry_point("classify_issue")
+    workflow.add_edge("classify_issue", "analyze_sentiment")
+    workflow.add_edge("analyze_sentiment", "should_escalate")
+    
+    workflow.add_conditional_edges(
+        "should_escalate",
+        {
+            "handle": "handle_customer_query",
+            "escalate": "escalate_to_human"
         }
     )
     
-    return qa_chain
-
-async def query_rag_system(qa_chain, query):
-    print(f"\nBuscando resposta para: {query}")
-    response = await qa_chain.ainvoke({"query": query})
-    return response
-
-def main():
-    print("Iniciando sistema RAG...")
+    workflow.add_edge("handle_customer_query", "check_resolution")
+    workflow.add_edge("escalate_to_human", "check_resolution")
     
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
+    workflow.add_conditional_edges(
+        "check_resolution",
+        {
+            "continue": "handle_customer_query",
+            "end": END
+        }
     )
     
-    try:
-        print("\nTentando carregar índice FAISS existente...")
-        vectorstore = load_rag_system(embeddings)
-        print("Índice FAISS carregado com sucesso!")
-    except Exception as e:
-        print(f"\nErro ao carregar índice existente: {e}")
-        print("Criando novo índice FAISS...")
-        vectorstore = create_rag_system()
+    return workflow.compile()
+
+# Classe principal do agente
+class CustomerServiceAgent:
+    def __init__(self):
+        self.graph = build_customer_service_graph()
+        
+    def handle_message(self, customer_id: str, message: str) -> List[Dict[str, str]]:
+        """Processa uma nova mensagem do cliente"""
+        initial_state = AgentState(
+            messages=[format_message("user", message)],
+            customer_id=customer_id,
+            issue_type=None,
+            sentiment=None,
+            escalated=False,
+            resolved=False
+        )
+        
+        # Executa o fluxo
+        final_state = self.graph.invoke(initial_state)
+        
+        # Registra a interação
+        self._log_interaction(final_state)
+        
+        return final_state["messages"]
     
-    qa_chain = create_qa_chain(vectorstore)
+    def _log_interaction(self, state: AgentState):
+        """Registra a interação para análise"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "customer_id": state["customer_id"],
+            "issue_type": state["issue_type"],
+            "sentiment": state["sentiment"],
+            "escalated": state["escalated"],
+            "resolved": state["resolved"],
+            "messages": state["messages"]
+        }
+        print(f"Log da interação: {log_entry}")
+
+def main():
+    # Verifica se a API key está configurada
+    if not os.getenv("GROQ_API_KEY"):
+        print("Erro: GROQ_API_KEY não está configurada!")
+        return
+        
+    agent = CustomerServiceAgent()
     
-    # Loop para fazer perguntas
-    import asyncio
-    while True:
-        query = input("\nDigite sua pergunta (ou 'sair' para encerrar): ")
-        if query.lower() == 'sair':
-            break
-            
-        response = asyncio.run(query_rag_system(qa_chain, query))
-        print("\nResposta:", response['result'])
+    # Exemplo de interação
+    customer_id = "CUST123"
+    message = "Estou muito irritado! Minha conta foi cobrada duas vezes este mês!"
+    
+    print("\nProcessando mensagem do cliente...")
+    responses = agent.handle_message(customer_id, message)
+    
+    print("\nConversa:")
+    for msg in responses:
+        print(f"{msg['role'].upper()}: {msg['content']}\n")
 
 if __name__ == "__main__":
     main()
