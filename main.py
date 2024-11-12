@@ -96,13 +96,16 @@ class TutorialHandler:
         context = "\n".join([text for text, _, _ in relevant_sections])
         
         prompt = f"""
-        Com base no seguinte contexto do tutorial sobre lançamento de notas fiscais de imobilizado:
-        {context}
-        
-        Responda à seguinte pergunta de forma clara e didática:
-        {query}
-        
-        Se a pergunta for sobre imobilizado, certifique-se de mencionar que estou mostrando todos os passos do processo para melhor compreensão.
+        Com base no tutorial sobre o lançamento de notas fiscais de imobilizado, responda a pergunta abaixo de forma clara e didática:
+
+        Contexto do Tutorial: {context}
+
+        Pergunta: {query}
+
+        Instruções adicionais:
+
+        Se a pergunta estiver relacionada ao imobilizado, inclua todos os passos do processo para facilitar a compreensão completa.
+        Se a pergunta for sobre despesas, classifique os itens conforme o título em que cada palavra estiver listada abaixo.
         """
         
         explanation = self.llm.predict(prompt)
