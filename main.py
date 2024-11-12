@@ -227,7 +227,7 @@ def build_graph() -> StateGraph:
 
 def main():
     st.set_page_config(page_title="Sistema de Chat Unificado", layout="wide")
-    st.title("💬 Assistente de Documentação e Tutorial")
+    st.title("💬 Assistente")
     
     # Initialize session state
     if 'messages' not in st.session_state:
